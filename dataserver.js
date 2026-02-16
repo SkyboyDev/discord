@@ -2,28 +2,34 @@ const express = require('express');
 const app = express();
 const server = require('http').Server(app);
 const io = require('socket.io')(server, {
-    cors: { origin: "*" } // Allows phone to connect to PC without security blocks
+    cors: {
+        origin: "*", 
+        methods: ["GET", "POST"]
+    }
 });
 const { ExpressPeerServer } = require('peer');
 
-// PeerJS Server
+// Set up PeerJS server
 const peerServer = ExpressPeerServer(server, {
     debug: true,
     path: '/'
 });
 
+// Middleware
 app.use('/peerjs', peerServer);
 app.use(express.static(__dirname));
 
-// Important: This helps bypass the ngrok "Welcome" screen
+// Routes
 app.get('/', (req, res) => {
     res.setHeader('ngrok-skip-browser-warning', 'true');
     res.sendFile(__dirname + '/index.html');
 });
 
+// Socket.io for Signaling
 io.on('connection', (socket) => {
     socket.on('join-room', (roomId, userId) => {
         socket.join(roomId);
+        // Alert others that a new user has joined
         socket.to(roomId).emit('user-connected', userId);
         
         socket.on('disconnect', () => {
@@ -32,7 +38,8 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = 3000;
+// Port configuration for Render
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server is LIVE on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
