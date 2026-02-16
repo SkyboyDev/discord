@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Group Call - Fixed</title>
+    <link rel="icon" href="data:,">
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { margin: 0; background: #121212; color: white; font-family: sans-serif; text-align: center; }
+        #video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; padding: 10px; }
+        video { width: 100%; border-radius: 10px; background: #000; transform: scaleX(-1); height: 200px; object-fit: cover; }
+        .controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; background: #333; padding: 15px; border-radius: 50px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        button { width: 50px; height: 50px; border-radius: 50%; border: none; cursor: pointer; font-size: 18px; background: #444; color: white; }
+        .active-red { background: #ea4335; }
+        #status { font-size: 14px; padding: 10px; color: #0f9d58; }
+    </style>
+</head>
+<body>
+
+    <div id="status">System: Initializing...</div>
+    <div id="video-grid"></div>
+
+    <div class="controls">
+        <button id="m-btn" onclick="toggleAudio()">🎤</button>
+        <button id="v-btn" onclick="toggleVideo()">📹</button>
+        <button onclick="window.location.reload()" style="background:#ea4335">📞</button>
+    </div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const videoGrid = document.getElementById('video-grid');
+        const socket = io('/', {
+            extraHeaders: { "ngrok-skip-browser-warning": "true" }
+        });
+
+        // Detect if we are on HTTPS (ngrok) or HTTP (local)
+        const isSecure = location.protocol === 'https:';
+        
+        const myPeer = new Peer(undefined, {
+            path: '/peerjs',
+            host: location.hostname,
+            port: location.port || (isSecure ? 443 : 80),
+            secure: isSecure,
+            debug: 3
+        });
+
+        const myVideo = document.createElement('video');
+        myVideo.muted = true;
+        let myStream;
+
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+            myStream = stream;
+            addVideo(myVideo, stream);
+
+            myPeer.on('call', call => {
+                call.answer(stream);
+                const vid = document.createElement('video');
+                call.on('stream', userStream => addVideo(vid, userStream));
+            });
+
+            socket.on('user-connected', userId => {
+                statusDiv.innerText = "Connecting to new user...";
+                setTimeout(() => {
+                    const call = myPeer.call(userId, stream);
+                    const vid = document.createElement('video');
+                    call.on('stream', userStream => addVideo(vid, userStream));
+                }, 1500);
+            });
+        }).catch(e => {
+            statusDiv.innerText = "Camera Error: Check Permissions & use HTTPS";
+            statusDiv.style.color = "red";
+        });
+
+        myPeer.on('open', id => {
+            statusDiv.innerText = "✅ Connected. Share the link!";
+            socket.emit('join-room', 'DEFAULT_ROOM', id);
+        });
+
+        myPeer.on('error', err => {
+            console.error(err);
+            statusDiv.innerText = "❌ Peer Error: " + err.type;
+            statusDiv.style.color = "red";
+        });
+
+        function addVideo(video, stream) {
+            video.srcObject = stream;
+            video.addEventListener('loadedmetadata', () => video.play());
+            videoGrid.append(video);
+        }
+
+        function toggleAudio() {
+            myStream.getAudioTracks()[0].enabled = !myStream.getAudioTracks()[0].enabled;
+            document.getElementById('m-btn').classList.toggle('active-red');
+        }
+
+        function toggleVideo() {
+            myStream.getVideoTracks()[0].enabled = !myStream.getVideoTracks()[0].enabled;
+            document.getElementById('v-btn').classList.toggle('active-red');
+        }
+    </script>
+</body>
+</html>
