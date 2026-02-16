@@ -3,101 +3,157 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Group Call - Fixed</title>
+    <title>Discord-DMSH Calling</title>
     <link rel="icon" href="data:,">
+    
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    
     <style>
-        body { margin: 0; background: #121212; color: white; font-family: sans-serif; text-align: center; }
-        #video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; padding: 10px; }
-        video { width: 100%; border-radius: 10px; background: #000; transform: scaleX(-1); height: 200px; object-fit: cover; }
-        .controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; background: #333; padding: 15px; border-radius: 50px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        button { width: 50px; height: 50px; border-radius: 50%; border: none; cursor: pointer; font-size: 18px; background: #444; color: white; }
-        .active-red { background: #ea4335; }
-        #status { font-size: 14px; padding: 10px; color: #0f9d58; }
+        body { 
+            margin: 0; background: #202225; color: white; 
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+
+        #status-indicator {
+            background: #2f3136; padding: 8px; text-align: center;
+            font-size: 13px; color: #43b581; font-weight: bold;
+            border-bottom: 1px solid #202225;
+        }
+
+        #video-grid {
+            flex-grow: 1; display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px; padding: 20px; overflow-y: auto;
+            background: #36393f;
+        }
+
+        video {
+            width: 100%; height: 250px; object-fit: cover;
+            background: #000; border-radius: 12px;
+            transform: scaleX(-1); border: 2px solid #40444b;
+        }
+
+        .controls {
+            height: 90px; background: #2f3136;
+            display: flex; justify-content: center; align-items: center; gap: 25px;
+        }
+
+        button {
+            width: 55px; height: 55px; border-radius: 50%; border: none;
+            cursor: pointer; font-size: 20px; background: #4f545c; color: white;
+            transition: all 0.2s ease;
+        }
+
+        button:hover { background: #5d6269; transform: scale(1.05); }
+        .toggle-off { background: #ed4245 !important; }
+
+        @media (max-width: 600px) {
+            #video-grid { grid-template-columns: 1fr; padding: 10px; }
+            video { height: 200px; }
+        }
     </style>
 </head>
 <body>
 
-    <div id="status">System: Initializing...</div>
+    <div id="status-indicator">Connecting to Cloud...</div>
     <div id="video-grid"></div>
 
     <div class="controls">
-        <button id="m-btn" onclick="toggleAudio()">🎤</button>
-        <button id="v-btn" onclick="toggleVideo()">📹</button>
-        <button onclick="window.location.reload()" style="background:#ea4335">📞</button>
+        <button id="mic-btn" onclick="toggleMic()">🎤</button>
+        <button id="vid-btn" onclick="toggleVid()">📹</button>
+        <button onclick="window.location.reload()" style="background:#ed4245">📞</button>
     </div>
 
     <script>
-        const statusDiv = document.getElementById('status');
         const videoGrid = document.getElementById('video-grid');
-        const socket = io('/', {
-            extraHeaders: { "ngrok-skip-browser-warning": "true" }
-        });
+        const statusText = document.getElementById('status-indicator');
+        const socket = io('/');
 
-        // Detect if we are on HTTPS (ngrok) or HTTP (local)
-        const isSecure = location.protocol === 'https:';
-        
+        // PeerJS setup for discord-dmsh.onrender.com
         const myPeer = new Peer(undefined, {
             path: '/peerjs',
-            host: location.hostname,
-            port: location.port || (isSecure ? 443 : 80),
-            secure: isSecure,
-            debug: 3
+            host: 'discord-dmsh.onrender.com',
+            port: 443,
+            secure: true
         });
 
-        const myVideo = document.createElement('video');
-        myVideo.muted = true;
         let myStream;
+        const peers = {};
 
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+        // Start Camera/Mic
+        navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+        }).then(stream => {
             myStream = stream;
-            addVideo(myVideo, stream);
+            const myVideo = document.createElement('video');
+            myVideo.muted = true;
+            addVideoStream(myVideo, stream);
 
+            // Receive Calls
             myPeer.on('call', call => {
                 call.answer(stream);
-                const vid = document.createElement('video');
-                call.on('stream', userStream => addVideo(vid, userStream));
+                const video = document.createElement('video');
+                call.on('stream', userVideoStream => {
+                    addVideoStream(video, userVideoStream);
+                });
             });
 
+            // Handle New Users
             socket.on('user-connected', userId => {
-                statusDiv.innerText = "Connecting to new user...";
-                setTimeout(() => {
-                    const call = myPeer.call(userId, stream);
-                    const vid = document.createElement('video');
-                    call.on('stream', userStream => addVideo(vid, userStream));
-                }, 1500);
+                statusText.innerText = "Connecting to peer...";
+                // Give Render time to handshake
+                setTimeout(() => connectToNewUser(userId, stream), 2000);
             });
-        }).catch(e => {
-            statusDiv.innerText = "Camera Error: Check Permissions & use HTTPS";
-            statusDiv.style.color = "red";
+        }).catch(err => {
+            statusText.innerText = "Error: Camera/Mic permission denied.";
+            statusText.style.color = "#ed4245";
         });
 
         myPeer.on('open', id => {
-            statusDiv.innerText = "✅ Connected. Share the link!";
-            socket.emit('join-room', 'DEFAULT_ROOM', id);
+            statusText.innerText = "● LIVE - ID: " + id.substring(0, 8);
+            socket.emit('join-room', 'DMSH_MAIN_ROOM', id);
         });
 
-        myPeer.on('error', err => {
-            console.error(err);
-            statusDiv.innerText = "❌ Peer Error: " + err.type;
-            statusDiv.style.color = "red";
+        socket.on('user-disconnected', userId => {
+            if (peers[userId]) peers[userId].close();
         });
 
-        function addVideo(video, stream) {
+        function connectToNewUser(userId, stream) {
+            const call = myPeer.call(userId, stream);
+            const video = document.createElement('video');
+            call.on('stream', userVideoStream => {
+                addVideoStream(video, userVideoStream);
+            });
+            call.on('close', () => {
+                video.remove();
+            });
+            peers[userId] = call;
+        }
+
+        function addVideoStream(video, stream) {
             video.srcObject = stream;
-            video.addEventListener('loadedmetadata', () => video.play());
+            video.addEventListener('loadedmetadata', () => {
+                video.play();
+            });
             videoGrid.append(video);
         }
 
-        function toggleAudio() {
-            myStream.getAudioTracks()[0].enabled = !myStream.getAudioTracks()[0].enabled;
-            document.getElementById('m-btn').classList.toggle('active-red');
+        // UI Functions
+        function toggleMic() {
+            const enabled = myStream.getAudioTracks()[0].enabled;
+            myStream.getAudioTracks()[0].enabled = !enabled;
+            document.getElementById('mic-btn').classList.toggle('toggle-off');
+            document.getElementById('mic-btn').innerText = enabled ? "🔇" : "🎤";
         }
 
-        function toggleVideo() {
-            myStream.getVideoTracks()[0].enabled = !myStream.getVideoTracks()[0].enabled;
-            document.getElementById('v-btn').classList.toggle('active-red');
+        function toggleVid() {
+            const enabled = myStream.getVideoTracks()[0].enabled;
+            myStream.getVideoTracks()[0].enabled = !enabled;
+            document.getElementById('vid-btn').classList.toggle('toggle-off');
+            document.getElementById('vid-btn').innerText = enabled ? "🚫" : "📹";
         }
     </script>
 </body>
